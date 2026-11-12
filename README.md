@@ -83,6 +83,7 @@ pnpm test
 | Setting | Source | Purpose |
 | --- | --- | --- |
 | `OPENROUTER_API_KEY` | Environment | Authenticates model requests. |
+| `OPENROUTER_MODEL` | Environment, optional | Overrides the default free model (`baidu/ernie-5.5-flash-preview:free`). Must end in `:free`; check OpenRouter's current free model catalog if the default is unavailable. |
 | LangSmith tracing variables | Environment | Optional LangSmith tracing, as shown in `.env.example`. |
 | Model, routing, temperature, title, and summary threshold | `src/config.ts` | Controls OpenRouter requests and summarization behavior. |
 | PostgreSQL connection string | `src/config.ts` | Used by the LangGraph PostgreSQL checkpointer and store. |
