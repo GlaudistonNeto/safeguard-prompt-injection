@@ -1,3 +1,24 @@
+import { readFileSync } from 'fs';
+import usersData from '../data/users.json' with { type: 'json' };
+
+// User type
+export type User = {
+  username: string;
+  role: 'admin' | 'member';
+  permissions: string[];
+  displayName: string;
+};
+
+// Users database
+export const users: Record<string, User> = usersData as Record<string, User>;
+
+export const prompts = {
+  blocked: readFileSync('./prompts/blocked.txt', 'utf-8'),
+  system: readFileSync('./prompts/system.txt', 'utf-8'),
+  guardrails: readFileSync('./prompts/guardrails.txt', 'utf-8'),
+}
+
+// Model configuration type
 export type ModelConfig = {
   apiKey: string;
   httpReferer: string;
@@ -12,36 +33,32 @@ export type ModelConfig = {
 
   models: string[];
   temperature: number;
-
-  memory: {
-    dbUri: string;
-  };
-  maxMessagesToSummary: number;
+  maxTokens: number;
+  guardrailsModel: string;
 
 };
-
-console.assert(process.env.OPENROUTER_API_KEY, 'OPENROUTER_API_KEY is not set in environment variables');
-
-const model = process.env.OPENROUTER_MODEL?.trim() || 'baidu/ernie-5.5-flash-preview:free';
-
-if (!model.endsWith(':free')) {
-  throw new Error('OPENROUTER_MODEL must be a free model ID ending in :free.');
-}
 
 export const config: ModelConfig = {
   apiKey: process.env.OPENROUTER_API_KEY!,
   httpReferer: '',
-  xTitle: 'IA Devs - Prompt Chaining Article Generator',
-  models: [model],
+  xTitle: 'IA Devs - Guardrails'!,
+  models: [
+    // 'upstage/solar-pro-3:free',
+    'qwen/qwen-2.5-7b-instruct',// unsafe!
+  ],
+
+  guardrailsModel: 'openai/gpt-oss-safeguard-20b',
   provider: {
     sort: {
-      by: 'throughput', // Route to model with highest throughput (fastest response)
+      by: 'price',
       partition: 'none',
     },
   },
   temperature: 0.7,
-  memory: {
-    dbUri: 'postgresql://postgres:mysecretpassword@localhost:5432/song_recommender',
-  },
-  maxMessagesToSummary: 2
+  maxTokens: 1000,
 };
+
+// Get user by username
+export function getUser(username: string): User | undefined {
+  return users[username];
+}

@@ -1,69 +1,37 @@
-import {
-  StateGraph,
-  START,
-  END,
-  MessagesZodMeta,
-} from "@langchain/langgraph";
-import { withLangGraph } from "@langchain/langgraph/zod";
-import { z } from "zod/v3";
-
-import type { BaseMessage } from '@langchain/core/messages';
-import { OpenRouterService } from '../services/openrouterService.ts';
+import { StateGraph, START, END } from '@langchain/langgraph';
+import { SafeguardStateAnnotation, type GraphState } from './state.ts';
+import { createGuardrailsCheckNode } from './nodes/guardrailsCheckNode.ts';
 import { createChatNode } from './nodes/chatNode.ts';
-import { createSummarizationNode } from './nodes/summarizationNode.ts';
-import { createSavePreferencesNode } from './nodes/savePreferencesNode.ts';
-import { routeAfterChat, routeAfterSavePreferences } from './nodes/edgeConditions.ts';
-import { PreferencesService } from "../services/preferencesService.ts";
-import { type MemoryService } from "../services/memoryService.ts";
+import { blockedNode } from './nodes/blockedNode.ts';
+import { routeAfterGuardrails } from './nodes/edgeConditions.ts';
+import { OpenRouterService } from '../services/openrouterService.ts';
 
-const ChatStateAnnotation = z.object({
-  messages: withLangGraph(
-    z.custom<BaseMessage[]>(),
-    MessagesZodMeta),
-  userContext: z.string().optional(),
-  extractedPreferences: z.any().optional(),
-  needsSummarization: z.boolean().optional(),
-  conversationSummary: z.any().optional(),
-  userId: z.string().optional(),
-});
+export function buildChatGraph() {
 
-export type GraphState = z.infer<typeof ChatStateAnnotation>;
+    const service = new OpenRouterService();
+    const workflow = new StateGraph({
+        stateSchema: SafeguardStateAnnotation
+    })
+        .addNode('guardrails_check', createGuardrailsCheckNode(service))
+        .addNode('chat', createChatNode(service))
+        .addNode('blocked', blockedNode)
 
-export function buildChatGraph(
-  llmClient: OpenRouterService,
-  preferencesService: PreferencesService,
-  memoryService: MemoryService,
-) {
-  const graph = new StateGraph(ChatStateAnnotation)
-    .addNode('chat', createChatNode(llmClient, preferencesService))
-    .addNode('savePreferences', createSavePreferencesNode(preferencesService))
-    .addNode('summarize', createSummarizationNode(llmClient, preferencesService))
+        // Set entry point
+        .addEdge(START, 'guardrails_check')
 
-    .addEdge(START, 'chat')
+        // Define conditional edge after guardrails check
+        .addConditionalEdges(
+            'guardrails_check',
+            (state: GraphState) => routeAfterGuardrails(state),
+            {
+                chat: 'chat',
+                blocked: 'blocked',
+            }
+        )
 
-    .addConditionalEdges(
-      'chat',
-      routeAfterChat,
-      {
-        savePreferences: 'savePreferences',
-        summarize: 'summarize',
-        end: END,
-      }
-    )
+        // Both chat and blocked nodes end the flow
+        .addEdge('chat', END)
+        .addEdge('blocked', END);
 
-    .addConditionalEdges(
-      'savePreferences',
-      routeAfterSavePreferences,
-      {
-        summarize: 'summarize',
-        end: END,
-      }
-    )
-
-    .addEdge('summarize', END);
-
-  return graph.compile({
-    checkpointer: memoryService.checkpointer,
-    store: memoryService.store,
-  });
+    return workflow.compile();
 }

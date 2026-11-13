@@ -1,59 +1,43 @@
-import type { Runtime } from '@langchain/langgraph';
+import type { GraphState } from '../state.ts';
+import { AIMessage } from '@langchain/core/messages';
 import { OpenRouterService } from '../../services/openrouterService.ts';
-import type { GraphState } from '../graph.ts';
-import { ChatResponseSchema, getSystemPrompt, getUserPromptTemplate } from '../../prompts/v1/chatResponse.ts';
-import { AIMessage, HumanMessage } from 'langchain';
-import { PreferencesService } from '../../services/preferencesService.ts';
-import { config } from '../../config.ts';
+import { PromptTemplate } from '@langchain/core/prompts';
+import { getUser, prompts } from '../../config.ts';
 
+export const createChatNode = (openRouterService: OpenRouterService) => {
+    return async (state: GraphState): Promise<Partial<GraphState>> => {
+        try {
 
-export function createChatNode(llmClient: OpenRouterService, preferencesService: PreferencesService) {
-  return async (state: GraphState, runtime?: Runtime): Promise<Partial<GraphState>> => {
-    const userId = String(runtime?.context?.userId || state.userId || 'unknown')
-    const userContext = state.userContext ?? await preferencesService.getBasicInfo(userId)
-    const systemPrompt = getSystemPrompt(userContext)
+            // only for LangSmith Studio - set defaults if not present
+            if(!state.user) {
+                state.user = getUser('ananeri')!;
+                state.guardrailsEnabled = false;
+            }
 
-    const conversationHistory = state.messages
-      .map(msg => `${HumanMessage.isInstance(msg) ? 'User' : 'AI'}: ${msg.content}`)
-      .join('\n')
+            const userPrompt = state.messages.at(-1)?.text!
+            const template = PromptTemplate.fromTemplate(prompts.system)
+            // exemplo abaixo é mais inseguro!!
+            // const systemPrompt = prompts.system
+            //  .replace('{USER_ROLE}', state.user.role);
+            //  .replace('{USER_NAME}', state.user.displayName);
 
-    const userMessage = state.messages.at(-1)?.text as string
-    const userPrompt = getUserPromptTemplate(
-      userMessage,
-      conversationHistory,
-    )
+            const systemPrompt = await template.format({
+                USER_ROLE: state.user.role,
+                USER_NAME: state.user.displayName
+            })
 
-    const result = await llmClient.generateStructured(
-      systemPrompt,
-      userPrompt,
-      ChatResponseSchema,
-    )
-
-    if (!result.success || !result.data) {
-      console.error('❌ Falha ao gerar resposta:', result.error);
-      return {
-        messages: [
-          new AIMessage('Desculpe, encontrei um erro. Pode tentar novamente?')
-        ]
-      }
+            const response = await openRouterService.generate(
+                systemPrompt,
+                userPrompt,
+            )
+            return {
+                messages: [new AIMessage(response)],
+            };
+        } catch (error) {
+            console.error('Chat node error:', error);
+            return {
+                messages: [new AIMessage('I apologize, but I encountered an error processing your request. Please try again later.')],
+            };
+        }
     }
-
-    const response = result.data
-
-    // Calculate if summarization is needed based on total message count
-    // After summarization, we keep 2 messages (1 user + 1 AI)
-    // So we trigger summarization when we have 6+ messages (3 exchanges)
-    // This gives: initial 2 + 4 new messages = 6 messages total
-
-    const totalMessages = state.messages.length
-    const needsSummarization = totalMessages >= config.maxMessagesToSummary
-
-    return {
-      messages: [
-        new AIMessage(response.message)
-      ],
-      extractedPreferences: response.shouldSavePreferences ? response.preferences : undefined,
-      needsSummarization,
-    };
-  };
 }
